@@ -547,6 +547,116 @@ def solve_nonlinear_system(
 
 
 @mcp.tool()
+def evaluate_numerically(
+    expr_key: str,
+    precision: int = 15,
+    subs: Optional[Dict[str, float]] = None,
+) -> str:
+    """Evaluates a stored expression to a decimal number using SymPy's evalf.
+
+    Use this to turn an exact result (e.g. sqrt(2)*pi) into a number, or to
+    evaluate an expression at given numeric values of its variables.
+
+    Args:
+        expr_key: The key of the expression (previously introduced) to evaluate.
+        precision: Number of significant digits. Defaults to 15.
+        subs: Optional mapping of variable names (previously introduced) to numeric values.
+
+    Example:
+        {expr_key: "expr_0", precision: 30}
+        {expr_key: "expr_1", subs: {"x": 2.5, "y": -1}}
+
+    Returns:
+        The numeric value as a string. Returns an error message string if issues occur.
+    """
+    if expr_key not in expressions:
+        return f"Error: Expression with key '{expr_key}' not found."
+
+    if precision < 1:
+        return "Error: precision must be a positive integer."
+
+    sub_map = {}
+    for var_name, value in (subs or {}).items():
+        if var_name not in local_vars:
+            return f"Error: Variable '{var_name}' not found in local_vars. Please introduce it first."
+        sub_map[local_vars[var_name]] = value
+
+    try:
+        result = sympy.N(expressions[expr_key], precision, subs=sub_map)
+        return str(result)
+    except Exception as e:
+        return f"Error during numeric evaluation: {str(e)}"
+
+
+@mcp.tool()
+def solve_numerically(
+    expr_keys: List[str],
+    var_names: List[str],
+    initial_guesses: List[float],
+    precision: int = 15,
+) -> str:
+    """Numerically solves an equation or system of equations using SymPy's nsolve.
+
+    Use this when solve_algebraically or solve_nonlinear_system cannot find a
+    closed-form solution, or when only a numeric answer is needed. Each
+    expression is treated as expression = 0 (Eq objects are converted).
+
+    nsolve uses Newton's method from the initial guesses and returns only the
+    single root nearest to them. To find other roots, call again with different
+    initial guesses.
+
+    Args:
+        expr_keys: The keys of the expressions (previously introduced) forming the system.
+        var_names: The names of the variables to solve for, one per equation.
+        initial_guesses: One starting value per variable, in the same order as var_names.
+        precision: Number of significant digits. Defaults to 15.
+
+    Example:
+        # Solve cos(x) = x near x = 1
+        {expr_keys: ["expr_0"], var_names: ["x"], initial_guesses: [1]}
+
+    Returns:
+        The solution as a string mapping variables to values, e.g. "{x: 0.739085133215161}".
+        Returns an error message string if issues occur.
+    """
+    if len(var_names) != len(initial_guesses):
+        return "Error: Provide exactly one initial guess per variable."
+
+    if precision < 1:
+        return "Error: precision must be a positive integer."
+
+    system = []
+    for expr_key in expr_keys:
+        if expr_key not in expressions:
+            return f"Error: Expression with key '{expr_key}' not found."
+
+        expr = expressions[expr_key]
+        # Convert equations to standard form
+        if isinstance(expr, sympy.Eq):
+            expr = expr.lhs - expr.rhs
+        system.append(expr)
+
+    symbols = []
+    for var_name in var_names:
+        if var_name not in local_vars:
+            return f"Error: Variable '{var_name}' not found in local_vars. Please introduce it first."
+        symbols.append(local_vars[var_name])
+
+    try:
+        if len(symbols) == 1 and len(system) == 1:
+            solution = [sympy.nsolve(system[0], symbols[0], initial_guesses[0], prec=precision)]
+        else:
+            solution = list(sympy.nsolve(system, symbols, initial_guesses, prec=precision))
+
+        pairs = ", ".join(f"{sym}: {val}" for sym, val in zip(symbols, solution))
+        return "{" + pairs + "}"
+    except ValueError as e:
+        return f"Error: nsolve did not converge from the given initial guesses: {str(e)}. Try different initial guesses."
+    except Exception as e:
+        return f"An unexpected error occurred during numeric solving: {str(e)}"
+
+
+@mcp.tool()
 def introduce_function(func_name: str) -> str:
     """Introduces a SymPy function variable and stores it.
 

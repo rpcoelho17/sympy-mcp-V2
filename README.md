@@ -71,6 +71,8 @@ The sympy-mcp server provides the following tools for symbolic mathematics:
 | Algebraic Solver | `solve_algebraically` | Solves an equation algebraically for a given variable over a given domain |
 | Linear Solver | `solve_linear_system` | Solves a system of linear equations |
 | Nonlinear Solver | `solve_nonlinear_system` | Solves a system of nonlinear equations |
+| Numeric Evaluator | `evaluate_numerically` | Evaluates an expression to a decimal number, optionally at given variable values |
+| Numeric Solver | `solve_numerically` | Numerically solves an equation or system near initial guesses (nsolve) |
 | Function Variable | `introduce_function` | Introduces a function variable for use in differential equations |
 | ODE Solver | `dsolve_ode` | Solves an ordinary differential equation |
 | PDE Solver | `pdsolve_pde` | Solves a partial differential equation |
