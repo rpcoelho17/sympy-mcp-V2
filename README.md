@@ -1,6 +1,21 @@
 # Symbolic Algebra MCP Server
 
-**This library is no longer maintained. It is Apache licensed, so feel free to fork it.**
+> **About this version.** This is **sympy-mcp-V2** by Rodrigo P. Coelho
+> ([github.com/rpcoelho17/sympy-mcp-V2](https://github.com/rpcoelho17/sympy-mcp-V2)), which
+> expands on Stephen Diehl's original [sympy-mcp](https://github.com/sdiehl/sympy-mcp) by
+> exposing SymPy's **numerical solvers**. The original tools are all symbolic, so an equation
+> with no closed-form solution came back unsolved; V2 adds tools that return numbers:
+>
+> | Tool | What it does |
+> |------|--------------|
+> | `evaluate_numerically` | Evaluates a stored expression to a decimal (`evalf`), at any precision, optionally substituting numeric values for its variables |
+> | `solve_numerically` | Finds a numeric root of an equation or system with `nsolve` (Newton's method) from initial guesses — works where `solve_algebraically` finds no closed form, e.g. `cos(x) = x` |
+>
+> `solve_numerically` returns the root nearest the initial guesses; call it again with other
+> guesses to find other roots. If you use or redistribute this work, credit it as described in
+> [License](#license).
+
+**The original library is no longer maintained. It is Apache licensed, so feel free to fork it.**
 
 Sympy-MCP is a Model Context Protocol server for allowing LLMs to autonomously perform symbolic mathematics and computer algebra. It exposes numerous tools from SymPy's core functionality to MCP clients for manipulating mathematical expressions and equations.
 
@@ -33,8 +48,8 @@ Then you can install and run the server with the following commands:
 
 ```shell
 # Setup the project
-git clone https://github.com/sdiehl/sympy-mcp.git
-cd sympy-mcp
+git clone https://github.com/rpcoelho17/sympy-mcp-V2.git
+cd sympy-mcp-V2
 uv sync
 
 # Install the server to Claude Desktop
@@ -455,6 +470,15 @@ This server runs on your computer and gives the language model access to run Pyt
 
 ## License
 
-Copyright 2025 Stephen Diehl.
+Copyright 2025 Stephen Diehl (original sympy-mcp).
+Modifications copyright 2026 Rodrigo P. Coelho (sympy-mcp-V2).
 
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file for details.
+
+**Attribution.** Under section 4(d) of the license, anyone who redistributes this work or a
+work derived from it must carry the attributions in the [NOTICE](NOTICE) file, by including
+them in a NOTICE file, in their documentation, or wherever such third-party notices normally
+appear. Credit both authors and sources:
+
+- Rodrigo P. Coelho — https://github.com/rpcoelho17/sympy-mcp-V2
+- Stephen Diehl — https://github.com/sdiehl/sympy-mcp

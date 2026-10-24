@@ -1,3 +1,5 @@
+# Copyright 2026 Rodrigo P. Coelho, sympy-mcp-V2 (https://github.com/rpcoelho17/sympy-mcp-V2).
+# Apache-2.0; see LICENSE and NOTICE.
 import pytest
 from server import (
     intro,

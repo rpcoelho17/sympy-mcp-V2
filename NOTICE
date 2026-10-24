@@ -1,0 +1,18 @@
+sympy-mcp-V2
+Copyright 2026 Rodrigo P. Coelho
+https://github.com/rpcoelho17/sympy-mcp-V2
+
+This product is a modified version of sympy-mcp
+Copyright 2025 Stephen Diehl
+https://github.com/sdiehl/sympy-mcp
+
+Both are licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Modifications by Rodrigo P. Coelho: added the evaluate_numerically and
+solve_numerically tools (numeric evaluation with evalf and numeric root
+finding with nsolve), their tests, and documentation.
+
+Any redistribution of this work, or of a work derived from it, must retain
+the attribution notices above, as required by section 4(d) of the License:
+credit Rodrigo P. Coelho and https://github.com/rpcoelho17/sympy-mcp-V2,
+and Stephen Diehl and https://github.com/sdiehl/sympy-mcp.

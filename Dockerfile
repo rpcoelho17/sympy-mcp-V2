@@ -18,6 +18,8 @@ ENV PATH="/root/.local/bin/:$PATH"
 COPY pyproject.toml .
 COPY vars.py .
 COPY server.py .
+# The license and attribution notices travel with every copy (Apache-2.0, section 4)
+COPY LICENSE NOTICE ./
 
 # Expose the default MCP port
 EXPOSE 8081

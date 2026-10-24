@@ -1,5 +1,9 @@
 # A stateful MCP server that holds a sympy session, with symbol table of variables
 # that can be used in the tools API to define and manipulate expressions.
+#
+# Original sympy-mcp: Copyright 2025 Stephen Diehl, https://github.com/sdiehl/sympy-mcp
+# Modified 2026 by Rodrigo P. Coelho for sympy-mcp-V2 (https://github.com/rpcoelho17/sympy-mcp-V2):
+# added the evaluate_numerically and solve_numerically tools. Apache-2.0; see LICENSE and NOTICE.
 
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
