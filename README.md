@@ -2,17 +2,16 @@
 
 > **About this version.** This is **sympy-mcp-V2** by Rodrigo P. Coelho
 > ([github.com/rpcoelho17/sympy-mcp-V2](https://github.com/rpcoelho17/sympy-mcp-V2)), which
-> expands on Stephen Diehl's original [sympy-mcp](https://github.com/sdiehl/sympy-mcp) by
-> exposing SymPy's **numerical solvers**. The original tools are all symbolic, so an equation
-> with no closed-form solution came back unsolved; V2 adds tools that return numbers:
+> is a fork of Stephen Diehl's [sympy-mcp](https://github.com/sdiehl/sympy-mcp).
+> Rodrigo P. Coelho contributed both numerical MCP tools in this fork:
 >
 > | Tool | What it does |
 > |------|--------------|
-> | `evaluate_numerically` | Evaluates a stored expression to a decimal (`evalf`), at any precision, optionally substituting numeric values for its variables |
+> | `evaluate_numerically` | Evaluates a stored expression to a decimal (`evalf`), at a requested precision, optionally substituting numeric values for its variables |
 > | `solve_numerically` | Finds a numeric root of an equation or system with `nsolve` (Newton's method) from initial guesses — works where `solve_algebraically` finds no closed form, e.g. `cos(x) = x` |
 >
-> `solve_numerically` returns the root nearest the initial guesses; call it again with other
-> guesses to find other roots. If you use or redistribute this work, credit it as described in
+> `solve_numerically` uses the initial guesses to search for a root. Try different guesses
+> to search for other roots. If you use or redistribute this work, credit it as described in
 > [License](#license).
 
 **The original library is no longer maintained. It is Apache licensed, so feel free to fork it.**
@@ -39,39 +38,19 @@ Or involving general relativity:
 
 ## Usage
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) first.
+Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/). The project requires Python 3.12 or later. uv can install the requested Python version if needed.
 
-- **Homebrew** : `brew install uv`
-- **Curl** : `curl -LsSf https://astral.sh/uv/install.sh | sh`
-
-Then you can install and run the server with the following commands:
+Clone the V2 repository and install its locked dependencies:
 
 ```shell
-# Setup the project
 git clone https://github.com/rpcoelho17/sympy-mcp-V2.git
 cd sympy-mcp-V2
-uv sync
-
-# Install the server to Claude Desktop
-uv run mcp install server.py
-
-# Run the server
-uv run mcp run server.py
+uv sync --locked
 ```
 
-You should see the server available in the Claude Desktop app now. For other clients, see below.
+Then follow the setup for your MCP client below. To run the stdio server from the checkout, use `uv run --locked mcp run server.py:mcp`. An MCP client communicates with the process over standard input and output.
 
-If you want a completely standalone version that just runs with a single command, you can use the following. *Note this is running arbitrary code from Github, so be careful.*
-
-```shell
-uv run --with https://github.com/sdiehl/sympy-mcp/releases/download/0.1/sympy_mcp-0.1.0-py3-none-any.whl python server.py
-```
-
-If you want to do general relativity calculations, you need to install the [`einsteinpy`](https://github.com/einsteinpy/einsteinpy) library.
-
-```shell
-uv sync --group relativity
-```
+For general relativity tools, install the optional [EinsteinPy](https://github.com/einsteinpy/einsteinpy) dependency with `uv sync --locked --group relativity`. Add `--group relativity` after `run` in your client's uv arguments to keep that group enabled when the client starts the server.
 
 ## Available Tools
 
@@ -124,31 +103,26 @@ By default variables are predefined with assumptions (similar to how the [symbol
 
 ## Claude Desktop Setup
 
-Normally the `mcp install` command will automatically add the server to the `claude_desktop_config.json` file. If it doesn't you need to find the config file and add the following:
+Open the Claude Desktop configuration file for your platform:
 
-* macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-* Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-Add the following to the `mcpServers` object, replacing `/ABSOLUTE_PATH_TO_SYMPY_MCP/server.py` with the absolute path to the sympy-mcp `server.py` file.
+Add the following server to `mcpServers`. Replace the placeholders with the absolute paths to the uv executable and the V2 checkout directory. In Windows JSON paths, use forward slashes or escape each backslash. Restart Claude Desktop after saving.
 
 ```json
 {
   "mcpServers": {
-    "sympy-mcp": {
-      "command": "/opt/homebrew/bin/uv",
+    "sympy-mcp-v2": {
+      "command": "/ABSOLUTE_PATH_TO_UV",
       "args": [
         "run",
-        "--with",
-        "einsteinpy",
-        "--with",
-        "mcp[cli]",
-        "--with",
-        "pydantic",
-        "--with",
-        "sympy",
+        "--locked",
+        "--directory",
+        "/ABSOLUTE_PATH_TO_SYMPY_MCP_V2",
         "mcp",
         "run",
-        "/ABSOLUTE_PATH_TO_SYMPY_MCP/server.py"
+        "server.py:mcp"
       ]
     }
   }
@@ -157,71 +131,30 @@ Add the following to the `mcpServers` object, replacing `/ABSOLUTE_PATH_TO_SYMPY
 
 ## Cursor Setup
 
-In your `~/.cursor/mcp.json`, add the following, where `ABSOLUTE_PATH_TO_SYMPY_MCP` is the path to the sympy-mcp server.py file.
+Use the same configuration in `~/.cursor/mcp.json`, with the paths set to your uv executable and V2 checkout.
+
+## VS Code Setup
+
+Add the following to `.vscode/mcp.json` in your workspace. Replace both path placeholders, then start the server from the MCP configuration.
 
 ```json
 {
-  "mcpServers": {
-    "sympy-mcp": {
-      "command": "/opt/homebrew/bin/uv",
+  "servers": {
+    "sympy-mcp-v2": {
+      "command": "/ABSOLUTE_PATH_TO_UV",
       "args": [
         "run",
-        "--with",
-        "einsteinpy",
-        "--with",
-        "mcp[cli]",
-        "--with",
-        "pydantic",
-        "--with",
-        "sympy",
+        "--locked",
+        "--directory",
+        "/ABSOLUTE_PATH_TO_SYMPY_MCP_V2",
         "mcp",
         "run",
-        "/ABSOLUTE_PATH_TO_SYMPY_MCP/server.py"
+        "server.py:mcp"
       ]
     }
   }
 }
 ```
-
-## VS Code Setup
-
-VS Code and VS Code Insiders now support MCPs in [agent mode](https://code.visualstudio.com/blogs/2025/04/07/agentMode). For VS Code, you may need to enable `Chat > Agent: Enable` in the settings.
-
-1. **One-click Setup:**
-
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=sympy-mcp&config=%7B%22command%22%3A%22docker%22%2C%22args%22%3A%5B%22run%22%2C%22-i%22%2C%22-p%22%2C%228081%3A8081%22%2C%22--rm%22%2C%22ghcr.io%2Fsdiehl%2Fsympy-mcp%3Amain%22%5D%7D)
-
-[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=sympy-mcp&config=%7B%22command%22%3A%22docker%22%2C%22args%22%3A%5B%22run%22%2C%22-i%22%2C%22-p%22%2C%228081%3A8081%22%2C%22--rm%22%2C%22ghcr.io%2Fsdiehl%2Fsympy-mcp%3Amain%22%5D%7D&quality=insiders)
-
-OR manually add the config to your `settings.json` (global):
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "sympy-mcp": {
-        "command": "uv",
-        "args": [
-          "run",
-          "--with",
-          "einsteinpy",
-          "--with",
-          "mcp[cli]",
-          "--with",
-          "pydantic",
-          "--with",
-          "sympy",
-          "mcp",
-          "run",
-          "/ABSOLUTE_PATH_TO_SYMPY_MCP/server.py"
-        ]
-      }
-    }
-  }
-}
-```
-
-2. Click "Start" above the server config switch to agent mode in the chat, and try commands like "integrate x^2" or "solve x^2 = 1" to get started.
 
 ## HTTP Transport (Streamable HTTP / SSE)
 
@@ -243,76 +176,16 @@ A `/healthcheck` endpoint is also exposed that runs a full MCP protocol round-tr
 
 ## Running in Container
 
-You can build and run the server using Docker locally:
+From the V2 checkout, build and run the image with Docker:
 
 ```bash
-# Build the Docker image
-docker build -t sympy-mcp .
-
-# Run the Docker container
-docker run -p 8081:8081 sympy-mcp
+docker build -t sympy-mcp-v2 .
+docker run --rm -p 127.0.0.1:8081:8081 sympy-mcp-v2
 ```
 
-Or use Docker Compose from the `docker/` directory:
+Connect your HTTP-capable MCP client to `http://127.0.0.1:8081/mcp`.
 
-```bash
-cd docker
-docker compose up -d --build
-```
-
-Alternatively, you can pull the pre-built image from GitHub Container Registry:
-
-```bash
-# Pull the latest image
-docker pull ghcr.io/sdiehl/sympy-mcp:main
-
-# Run the container
-docker run -p 8081:8081 --rm ghcr.io/sdiehl/sympy-mcp:main
-```
-
-To configure Claude Desktop to launch the Docker container, edit your `claude_desktop_config.json` file:
-
-```json
-{
-  "mcpServers": {
-    "sympy-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "-p",
-        "8081:8081",
-        "--rm",
-        "sympy-mcp"
-      ]
-    }
-  }
-}
-```
-
-Or to use the pre-built container from GitHub:
-
-```json
-{
-  "mcpServers": {
-    "sympy-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "-p",
-        "8081:8081",
-        "--rm",
-        "ghcr.io/sdiehl/sympy-mcp:main"
-      ]
-    }
-  }
-}
-```
-
-This configuration tells Claude Desktop to launch the Docker container when needed. Make sure to build the Docker image (`docker build -t sympy-mcp .`) before using Claude Desktop with this configuration.
-
-The other installation methods can also be adapted to work with Docker if you change the uv command to use the docker run command instead.
+If you use the included Docker Compose configuration, run `docker compose -f docker/docker-compose.yml up --build` from the checkout. Compose maps the container's port 8081 to host port 8082, so its MCP endpoint is `http://localhost:8082/mcp`.
 
 ## Example Interaction 1 : Differential Equations
 
