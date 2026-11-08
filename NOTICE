@@ -10,7 +10,11 @@ Both are licensed under the Apache License, Version 2.0 (see LICENSE).
 
 Modifications by Rodrigo P. Coelho: added the evaluate_numerically and
 solve_numerically tools (numeric evaluation with evalf and numeric root
-finding with nsolve), their tests, and documentation.
+finding with nsolve); exposed SymPy's statistics module, sympy.stats, through
+the random variable, probability, expectation, statistic, moment, covariance,
+density, cumulative distribution, quantile and Markov chain tools, with a
+time-limited worker process and a numerical-integration fallback; and wrote
+their tests and documentation.
 
 Any redistribution of this work, or of a work derived from it, must retain
 the attribution notices above, as required by section 4(d) of the License:

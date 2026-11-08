@@ -11,8 +11,33 @@
 > | `solve_numerically` | Finds a numeric root of an equation or system with `nsolve` (Newton's method) from initial guesses — works where `solve_algebraically` finds no closed form, e.g. `cos(x) = x` |
 >
 > `solve_numerically` uses the initial guesses to search for a root. Try different guesses
-> to search for other roots. If you use or redistribute this work, credit it as described in
-> [License](#license).
+> to search for other roots.
+>
+> Rodrigo P. Coelho also contributed the `sympy.stats` tools, which add random variables and
+> what can be calculated from them:
+>
+> | Tool | What it does |
+> |------|--------------|
+> | `introduce_random_variable` | Creates a variable from any single-variable `sympy.stats` distribution (Normal, Poisson, StudentT, ...); expressions then use it by name |
+> | `introduce_finite_random_variable` | Creates a discrete variable from a table of values and probabilities |
+> | `probability` | Probability of an event, conditional too |
+> | `expectation` | Expected value of a random expression, conditional too |
+> | `random_variable_statistic` | Variance, standard deviation, skewness, kurtosis or entropy |
+> | `moment` | Raw or central moment of any order |
+> | `covariance` | Covariance or correlation of two random expressions |
+> | `density` | Probability density or mass function |
+> | `cumulative_distribution` | The CDF, or its value at a point |
+> | `quantile` | The value a variable falls at or below with a given probability |
+> | `markov_chain` | Stationary and limiting distributions, communication classes, fundamental matrix and absorbing probabilities |
+>
+> These calls run in a worker process with a 20-second limit, because some exact calculations
+> never finish, such as a StudentT tail probability. When that happens, or SymPy has no method,
+> `probability`, `expectation`, variance, standard deviation, `quantile` and
+> `cumulative_distribution` at a point fall back to numerical integration for one continuous
+> variable, and the result says so. A quantity that does not exist, such as a Cauchy variable's
+> mean, comes back as an error. Joint distributions and random sampling are not exposed.
+>
+> If you use or redistribute this work, credit it as described in [License](#license).
 
 **The original library is no longer maintained. It is Apache licensed, so feel free to fork it.**
 
@@ -67,6 +92,17 @@ The sympy-mcp server provides the following tools for symbolic mathematics:
 | Nonlinear Solver | `solve_nonlinear_system` | Solves a system of nonlinear equations |
 | Numeric Evaluator | `evaluate_numerically` | Evaluates an expression to a decimal number, optionally at given variable values |
 | Numeric Solver | `solve_numerically` | Numerically solves an equation or system near initial guesses (nsolve) |
+| Random Variable | `introduce_random_variable` | Creates a random variable from a sympy.stats distribution |
+| Finite Random Variable | `introduce_finite_random_variable` | Creates a discrete random variable from values and probabilities |
+| Probability | `probability` | Calculates the probability of an event, conditional if asked |
+| Expectation | `expectation` | Calculates the expected value of a random expression, conditional if asked |
+| Random Statistics | `random_variable_statistic` | Calculates variance, standard deviation, skewness, kurtosis or entropy |
+| Moment | `moment` | Calculates a raw or central moment |
+| Covariance | `covariance` | Calculates the covariance or correlation of two random expressions |
+| Density | `density` | Gives a probability density or mass function |
+| CDF | `cumulative_distribution` | Gives a CDF, or its value at a point |
+| Quantile | `quantile` | Finds the value a random variable falls at or below with a given probability |
+| Markov Chain | `markov_chain` | Analyses a discrete or continuous Markov chain from its matrix |
 | Function Variable | `introduce_function` | Introduces a function variable for use in differential equations |
 | ODE Solver | `dsolve_ode` | Solves an ordinary differential equation |
 | PDE Solver | `pdsolve_pde` | Solves a partial differential equation |

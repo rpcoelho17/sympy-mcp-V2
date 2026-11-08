@@ -3,21 +3,37 @@
 #
 # Original sympy-mcp: Copyright 2025 Stephen Diehl, https://github.com/sdiehl/sympy-mcp
 # Modified 2026 by Rodrigo P. Coelho for sympy-mcp-V2 (https://github.com/rpcoelho17/sympy-mcp-V2):
-# added the evaluate_numerically and solve_numerically tools. Apache-2.0; see LICENSE and NOTICE.
+# added the evaluate_numerically and solve_numerically tools and the sympy.stats tools.
+# Apache-2.0; see LICENSE and NOTICE.
 
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 import httpx
 import json
+import multiprocessing
+import mpmath
 import sympy
+import sympy.stats as stats
 import argparse
 import logging
 from typing import List, Dict, Optional, Literal, Any, Union
 from pydantic import BaseModel
 from sympy.parsing.sympy_parser import parse_expr
 from sympy.core.facts import InconsistentAssumptions
-from vars import Assumption, Domain, ODEHint, PDEHint, Metric, Tensor, UnitSystem
+from sympy.stats.rv import RandomSymbol
+from vars import (
+    Assumption,
+    Distribution,
+    Domain,
+    MarkovQuantity,
+    ODEHint,
+    PDEHint,
+    Metric,
+    RandomStatistic,
+    Tensor,
+    UnitSystem,
+)
 from sympy import Eq, Function, dsolve, diff, integrate, simplify, Matrix
 from sympy.solvers.pde import pdsolve
 from sympy.vector import CoordSys3D, curl, divergence, gradient
@@ -658,6 +674,540 @@ def solve_numerically(
         return f"Error: nsolve did not converge from the given initial guesses: {str(e)}. Try different initial guesses."
     except Exception as e:
         return f"An unexpected error occurred during numeric solving: {str(e)}"
+
+
+# sympy.stats tools.
+#
+# Exact sympy.stats calls can run for ever: P(T > 2.228) for a StudentT never
+# returned in testing, and a tool call that never returns stalls the whole
+# server. So they run in a worker process that can be killed. The worker is kept
+# between calls because starting one re-imports this module, which takes seconds.
+STATS_TIMEOUT_SECONDS = 20
+STATS_WORKER_START_SECONDS = 120
+_stats_worker_process = None
+_stats_worker_conn = None
+
+
+def _numeric_setup(expr):
+    """The one continuous random variable in expr, a dummy, its density and its support."""
+    rvs = list(stats.random_symbols(expr))
+    if len(rvs) != 1 or not rvs[0].pspace.is_Continuous:
+        raise NotImplementedError(
+            "numerical integration handles expressions of one continuous random variable"
+        )
+    rv = rvs[0]
+    dist = rv.pspace.distribution
+    x = sympy.Dummy("x", real=True)
+    return rv, x, sympy.lambdify(x, dist.pdf(x), "mpmath"), dist.set
+
+
+def _integrate_over(fn, region):
+    """Integrates fn over a set, refusing a result whose error estimate is not small."""
+    if isinstance(region, sympy.Union):
+        return sum(_integrate_over(fn, part) for part in region.args)
+    if not isinstance(region, sympy.Interval):
+        return mpmath.mpf(0)  # single points carry no probability
+    limits = [mpmath.mpf(str(sympy.N(end, 30))) if end.is_finite else (mpmath.inf if end > 0 else -mpmath.inf)
+              for end in (region.inf, region.sup)]
+    value, error = mpmath.quad(fn, limits, error=True)
+    if abs(error) > 1e-6 * max(abs(value), 1):
+        raise ArithmeticError("the integral did not converge, so this quantity may not exist")
+    return value
+
+
+def _numeric_expectation(expr):
+    rv, x, pdf, support = _numeric_setup(expr)
+    g = sympy.lambdify(x, expr.subs(rv, x), "mpmath")
+    # An odd integrand can cancel to a tidy 0 when the mean does not exist, as with
+    # a Cauchy variable, so the absolute value has to converge first.
+    _integrate_over(lambda t: abs(g(t)) * pdf(t), support)
+    return _integrate_over(lambda t: g(t) * pdf(t), support)
+
+
+def _stats_probability_numeric(event, given):
+    joint = sympy.And(event, given) if given is not None else event
+    rv, x, pdf, support = _numeric_setup(joint)
+
+    def mass(condition):
+        return _integrate_over(pdf, condition.subs(rv, x).as_set().intersect(support))
+
+    value = mass(joint)
+    return sympy.Float(str(value / mass(given) if given is not None else value), 15)
+
+
+def _stats_expectation_numeric(expr, given):
+    if given is not None:
+        raise NotImplementedError("numerical integration does not handle a condition here")
+    return sympy.Float(str(_numeric_expectation(expr)), 15)
+
+
+def _stats_spread_numeric(statistic, expr, given):
+    if given is not None or statistic not in ("variance", "standard_deviation"):
+        raise NotImplementedError(f"numerical integration does not handle {statistic} with these inputs")
+    mean = _numeric_expectation(expr)
+    value = _numeric_expectation(expr**2) - mean**2
+    return sympy.Float(str(value if statistic == "variance" else mpmath.sqrt(value)), 15)
+
+
+def _stats_statistic(statistic, expr, given):
+    function = {
+        "variance": stats.variance,
+        "standard_deviation": stats.std,
+        "skewness": stats.skewness,
+        "kurtosis": stats.kurtosis,
+        "entropy": stats.H,
+    }[statistic]
+    return function(expr, given) if given is not None else function(expr)
+
+
+def _stats_probability(event, given):
+    return stats.P(event, given) if given is not None else stats.P(event)
+
+
+def _stats_expectation(expr, given):
+    return stats.E(expr, given) if given is not None else stats.E(expr)
+
+
+def _stats_moment(expr, order, central):
+    return (stats.cmoment if central else stats.moment)(expr, order)
+
+
+def _stats_covariance(first, second, correlation):
+    return (stats.correlation if correlation else stats.covariance)(first, second)
+
+
+def _stats_density(rv):
+    result = stats.density(rv)
+    return dict(result) if isinstance(result, dict) else result(sympy.Symbol("x"))
+
+
+def _stats_cdf(rv):
+    result = stats.cdf(rv)
+    return dict(result) if isinstance(result, dict) else result(sympy.Symbol("x"))
+
+
+def _stats_quantile(rv, level):
+    return stats.quantile(rv)(level)
+
+
+def _stats_quantile_numeric(rv, level):
+    """Root of CDF(t) = level, for when SymPy cannot invert the CDF."""
+    _, _, pdf, support = _numeric_setup(rv)
+    low = support.inf
+
+    def cdf(t):
+        return _integrate_over(pdf, sympy.Interval(low, sympy.Float(str(t), 30)))
+
+    target = float(level)
+    left = float(low) if low.is_finite else -1.0
+    right = float(support.sup) if support.sup.is_finite else left + 1.0
+    while not low.is_finite and cdf(left) > target:
+        left *= 2
+    while not support.sup.is_finite and cdf(right) < target:
+        right = left + 2 * (right - left)
+    return sympy.Float(str(mpmath.findroot(lambda t: cdf(t) - target, (left, right), solver="anderson", verify=False)), 15)
+
+
+def _stats_markov(matrix, quantity, continuous):
+    states = list(range(matrix.rows))
+    if continuous:
+        chain = stats.ContinuousMarkovChain("C", states, matrix)
+        if quantity != "limiting_distribution":
+            raise ValueError("A continuous chain offers limiting_distribution only.")
+        return chain.limiting_distribution()
+    chain = stats.DiscreteMarkovChain("M", states, matrix)
+    if quantity == "limiting_distribution":
+        return chain.limiting_distribution
+    if quantity == "communication_classes":
+        return [(list(states), recurrent, period) for states, recurrent, period in chain.communication_classes()]
+    return getattr(chain, quantity)()
+
+
+_STATS_TASKS = {
+    "probability": _stats_probability,
+    "probability_numeric": _stats_probability_numeric,
+    "expectation": _stats_expectation,
+    "expectation_numeric": _stats_expectation_numeric,
+    "statistic": _stats_statistic,
+    "statistic_numeric": _stats_spread_numeric,
+    "moment": _stats_moment,
+    "covariance": _stats_covariance,
+    "density": _stats_density,
+    "cdf": _stats_cdf,
+    "quantile": _stats_quantile,
+    "quantile_numeric": _stats_quantile_numeric,
+    "markov": _stats_markov,
+}
+
+
+def _describe_stats_value(value):
+    """(value, LaTeX, decimal or None); done in the worker, so the timeout covers it."""
+    latex = sympy.latex(value)
+    decimal = None
+    if isinstance(value, sympy.MatrixBase):
+        decimal = str(value.evalf(15).tolist()) if value.is_number or not value.free_symbols else None
+    elif isinstance(value, sympy.Expr) and value.is_number:
+        decimal = str(sympy.N(value, 15))
+    return value, latex, decimal
+
+
+def _stats_worker(conn):
+    conn.send(("ready", None))
+    while True:
+        task, args = conn.recv()
+        try:
+            value = _STATS_TASKS[task](*args)
+            if isinstance(value, sympy.ConditionSet) or (
+                isinstance(value, sympy.Basic)
+                and value.has(sympy.Integral, stats.Probability, stats.Expectation)
+                and not value.free_symbols
+            ):
+                conn.send(("unsolved", "SymPy found no closed form"))
+            else:
+                conn.send(("ok", _describe_stats_value(value)))
+        except NotImplementedError as e:
+            conn.send(("unsolved", str(e)))
+        except Exception as e:
+            conn.send(("error", f"{type(e).__name__}: {e}"))
+
+
+def _stop_stats_worker():
+    global _stats_worker_process, _stats_worker_conn
+    if _stats_worker_process is not None:
+        _stats_worker_process.kill()
+        _stats_worker_process.join()
+    _stats_worker_process, _stats_worker_conn = None, None
+
+
+def _run_stats(task, *args, timeout=STATS_TIMEOUT_SECONDS):
+    """Runs one sympy.stats task. Returns (status, payload), status being "ok",
+    "unsolved" (worth trying numerically), "timeout" or "error"."""
+    global _stats_worker_process, _stats_worker_conn
+    if _stats_worker_process is None or not _stats_worker_process.is_alive():
+        context = multiprocessing.get_context("spawn")
+        _stats_worker_conn, child = context.Pipe()
+        _stats_worker_process = context.Process(target=_stats_worker, args=(child,), daemon=True)
+        _stats_worker_process.start()
+        child.close()
+        if not _stats_worker_conn.poll(STATS_WORKER_START_SECONDS):
+            _stop_stats_worker()
+            return "error", "the statistics worker did not start"
+        _stats_worker_conn.recv()
+    _stats_worker_conn.send((task, args))
+    if not _stats_worker_conn.poll(timeout):
+        _stop_stats_worker()
+        return "timeout", f"no result within {timeout}s"
+    try:
+        return _stats_worker_conn.recv()
+    except EOFError:
+        _stop_stats_worker()
+        return "error", "the statistics worker stopped unexpectedly"
+
+
+def _report_stats(payload, note=""):
+    """Stores a result and reports it as `key: LaTeX ≈ decimal`."""
+    global expression_counter
+    value, latex, decimal = payload
+    key = f"expr_{expression_counter}"
+    expressions[key] = value
+    expression_counter += 1
+    shown = f"{key}: {latex}"
+    if decimal and decimal != latex:
+        shown += f" ≈ {decimal}"
+    return shown + note
+
+
+def _exact_then_numeric(task, args, numeric):
+    """The exact task, then numerical integration if that is asked for, finds no
+    closed form or runs out of time."""
+    reason = "requested"
+    if not numeric:
+        status, payload = _run_stats(task, *args)
+        if status == "ok":
+            return _report_stats(payload)
+        if status == "error":
+            return f"Error: {payload}"
+        reason = payload
+    status, payload = _run_stats(f"{task}_numeric", *args)
+    if status == "ok":
+        return _report_stats(payload, f" (numerical integration; exact: {reason})")
+    return f"Error: no exact result ({reason}), and numerical integration failed: {payload}"
+
+
+def _stored_expressions(*keys):
+    """The stored expressions for keys, with None passed through; floats become
+    rationals, since sympy.stats is much slower and less exact on floats."""
+    values = []
+    for key in keys:
+        if key is None:
+            values.append(None)
+        elif key not in expressions:
+            raise KeyError(f"Error: Expression with key '{key}' not found.")
+        else:
+            values.append(sympy.nsimplify(expressions[key], rational=True))
+    return values
+
+
+def _random_variable(var_name):
+    rv = local_vars.get(var_name)
+    if not isinstance(rv, RandomSymbol):
+        raise KeyError(f"Error: '{var_name}' is not a random variable. Use introduce_random_variable first.")
+    return rv
+
+
+def _stats_parameter(text):
+    value = parse_expr(str(text), local_dict=local_vars)
+    if isinstance(value, (list, tuple)):
+        return [sympy.nsimplify(v, rational=True) for v in value]
+    return sympy.nsimplify(value, rational=True)
+
+
+@mcp.tool()
+def introduce_random_variable(
+    var_name: str, distribution: Distribution, parameters: List[Union[str, float]]
+) -> str:
+    """Introduces a random variable with a sympy.stats distribution and stores it as a variable.
+
+    Expressions can then use it by name through introduce_expression: an event
+    such as "X > 120" or "And(X > 90, X < 110)", or a quantity such as "2*X + 1".
+    Variables are independent of each other.
+
+    Args:
+        var_name: The name of the random variable.
+        distribution: The distribution, by its sympy.stats name.
+        parameters: The distribution's parameters in sympy.stats order, as numbers or
+            strings; introduced variables are allowed. DiscreteUniform takes one list.
+
+    Example:
+        {var_name: "X", distribution: "Normal", parameters: [100, 15]}
+        {var_name: "N", distribution: "Poisson", parameters: ["lam"]}
+        {var_name: "U", distribution: "DiscreteUniform", parameters: ["[1, 2, 3]"]}
+
+    Returns:
+        The variable name, or an error message string.
+    """
+    try:
+        parsed = [_stats_parameter(p) for p in parameters]
+        local_vars[var_name] = getattr(stats, distribution.value)(var_name, *parsed)
+    except (TypeError, ValueError, SyntaxError) as e:
+        return f"Error creating {distribution.value} variable '{var_name}': {e}"
+    return var_name
+
+
+@mcp.tool()
+def introduce_finite_random_variable(
+    var_name: str, values: List[Union[str, float]], probabilities: List[Union[str, float]]
+) -> str:
+    """Introduces a discrete random variable from a table of values and probabilities.
+
+    Example:
+        {var_name: "Demand", values: [100, 150], probabilities: [0.4, 0.6]}
+
+    Returns:
+        The variable name, or an error message string.
+    """
+    if not values or len(values) != len(probabilities):
+        return "Error: Give values and probabilities of the same, non-zero length."
+    try:
+        table = {_stats_parameter(v): _stats_parameter(p) for v, p in zip(values, probabilities)}
+        if sympy.simplify(sum(table.values()) - 1) != 0:
+            return f"Error: The probabilities add up to {sum(table.values())}, not 1."
+        local_vars[var_name] = stats.FiniteRV(var_name, table)
+    except (TypeError, ValueError, SyntaxError) as e:
+        return f"Error creating finite variable '{var_name}': {e}"
+    return var_name
+
+
+@mcp.tool()
+def probability(expr_key: str, given_key: Optional[str] = None, numeric: bool = False) -> str:
+    """Calculates the probability of an event, conditional if given_key is set.
+
+    An exact answer is tried first. If SymPy finds none in time, as with StudentT
+    and FDistribution tails, one continuous variable falls back to numerical
+    integration; numeric=True goes straight to it.
+
+    Args:
+        expr_key: The key of the event, e.g. introduce_expression("X > 120").
+        given_key: The key of the event to condition on.
+        numeric: Skip the exact attempt and integrate numerically.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        event, given = _stored_expressions(expr_key, given_key)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_then_numeric("probability", (event, given), numeric)
+
+
+@mcp.tool()
+def expectation(expr_key: str, given_key: Optional[str] = None, numeric: bool = False) -> str:
+    """Calculates the expected value of a random expression, conditional if given_key is set.
+
+    Falls back to numerical integration as probability does.
+
+    Args:
+        expr_key: The key of the expression, e.g. introduce_expression("Min(Demand, 150)").
+        given_key: The key of the event to condition on.
+        numeric: Skip the exact attempt and integrate numerically.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        expr, given = _stored_expressions(expr_key, given_key)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_then_numeric("expectation", (expr, given), numeric)
+
+
+@mcp.tool()
+def random_variable_statistic(
+    statistic: RandomStatistic,
+    expr_key: str,
+    given_key: Optional[str] = None,
+    numeric: bool = False,
+) -> str:
+    """Calculates the variance, standard deviation, skewness, kurtosis or entropy of a random expression.
+
+    Variance and standard deviation fall back to numerical integration as probability does.
+
+    Args:
+        statistic: The statistic to calculate.
+        expr_key: The key of the expression.
+        given_key: The key of the event to condition on.
+        numeric: Skip the exact attempt and integrate numerically.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        expr, given = _stored_expressions(expr_key, given_key)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_then_numeric("statistic", (statistic.value, expr, given), numeric)
+
+
+def _exact_only(task, *args):
+    status, payload = _run_stats(task, *args)
+    if status == "ok":
+        return _report_stats(payload)
+    return f"Error: {payload}"
+
+
+@mcp.tool()
+def moment(expr_key: str, order: int, central: bool = False) -> str:
+    """Calculates a moment of a random expression: E[X^order], or about the mean if central.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        expr, = _stored_expressions(expr_key)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_only("moment", expr, order, central)
+
+
+@mcp.tool()
+def covariance(expr_key: str, other_key: str, correlation: bool = False) -> str:
+    """Calculates the covariance of two random expressions, or their correlation if asked.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        first, second = _stored_expressions(expr_key, other_key)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_only("covariance", first, second, correlation)
+
+
+@mcp.tool()
+def density(var_name: str) -> str:
+    """Gives a random variable's probability density or mass function, in the symbol x.
+
+    A finite variable gives its table of values and probabilities.
+
+    Returns:
+        "key: LaTeX", with the result stored under key, or an error message string.
+    """
+    try:
+        rv = _random_variable(var_name)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_only("density", rv)
+
+
+@mcp.tool()
+def cumulative_distribution(var_name: str, at: Optional[float] = None, numeric: bool = False) -> str:
+    """Gives a random variable's CDF in the symbol x, or P(X <= at) if at is set.
+
+    With `at`, falls back to numerical integration as probability does. Without it
+    the answer has to be a formula, and SymPy finds none for some distributions.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    try:
+        rv = _random_variable(var_name)
+    except KeyError as e:
+        return e.args[0]
+    if at is not None:
+        event = rv <= sympy.nsimplify(at, rational=True)
+        return _exact_then_numeric("probability", (event, None), numeric)
+    return _exact_only("cdf", rv)
+
+
+@mcp.tool()
+def quantile(var_name: str, level: float, numeric: bool = False) -> str:
+    """Finds the value a random variable falls at or below with probability level.
+
+    Falls back to a numerical root of the CDF when SymPy cannot invert it.
+
+    Args:
+        var_name: The random variable.
+        level: The probability, strictly between 0 and 1, e.g. 0.95.
+        numeric: Skip the exact attempt.
+
+    Returns:
+        "key: LaTeX ≈ decimal", with the result stored under key, or an error message string.
+    """
+    if not 0 < level < 1:
+        return "Error: level must be strictly between 0 and 1."
+    try:
+        rv = _random_variable(var_name)
+    except KeyError as e:
+        return e.args[0]
+    return _exact_then_numeric("quantile", (rv, sympy.nsimplify(level, rational=True)), numeric)
+
+
+@mcp.tool()
+def markov_chain(matrix_key: str, quantity: MarkovQuantity, continuous: bool = False) -> str:
+    """Analyses a Markov chain whose states are numbered from 0.
+
+    Args:
+        matrix_key: The key of a matrix from create_matrix: the transition probabilities,
+            or the generator matrix if continuous.
+        quantity: stationary_distribution, limiting_distribution, communication_classes,
+            fundamental_matrix or absorbing_probabilities. A continuous chain offers
+            limiting_distribution only.
+        continuous: Whether the chain runs in continuous time.
+
+    Example:
+        matrix_key = create_matrix([[0.5, 0.5], [0.25, 0.75]])
+        {matrix_key: matrix_key, quantity: "stationary_distribution"}
+
+    Returns:
+        "key: LaTeX", with the result stored under key, or an error message string.
+    """
+    if matrix_key not in expressions:
+        return f"Error: Matrix with key '{matrix_key}' not found."
+    matrix = expressions[matrix_key]
+    if not isinstance(matrix, sympy.MatrixBase):
+        return f"Error: '{matrix_key}' is not a matrix."
+    return _exact_only("markov", sympy.nsimplify(matrix, rational=True), quantity.value, continuous)
 
 
 @mcp.tool()
